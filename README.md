@@ -1,7 +1,7 @@
 # 3D-debugger
 A simple, extensible blender script for debugging 3D related code such as ray tracers, specifically designed for working with the [`pbrt`](https://pbr-book.org/) renderer but can theoretically be used with any renderer.
 
-# Examples
+# Example
 
 Visualizing directions of camera rays in an example scene:
 
