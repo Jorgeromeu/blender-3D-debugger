@@ -148,10 +148,38 @@ def direction_handler(params, color):
 
     create_object(verts, edges, faces, name, color)
 
+def poly_handler(params, color):
+
+    # get the first n vertices that are a point
+    i = 0
+    verts = []
+    for i, param in enumerate(params):
+        try:
+            verts.append(to_vertex(parse_point(param)))
+        except ValueError:
+            break
+
+    # if next arg, name
+    try:
+        name = str(params[i])
+    except IndexError:
+        name = 'dir'
+
+    # connect vertices
+    edges = []
+    for i, _ in enumerate(verts[:-1]):
+        edges.append((i, i+1))
+    edges.append((0, len(verts) - 1))
+
+    faces = []
+
+    create_object(verts, edges, faces, name, color)
+
 HANDLERS = {'POINT': point_handler,
             'LINE': line_handler,
             'DIR': direction_handler,
             'TRI': tri_handler,
+            'POLY': poly_handler,
             'TETRA': tetra_handler}
 
 def parse_trace(trace: str):
