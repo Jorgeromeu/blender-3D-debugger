@@ -6,7 +6,7 @@ import numpy as np
 LOGFILE = '/tmp/pbrt.INFO'
 
 SETTINGS = {
-    'MAX_OBJS': 100,
+    'MAX_OBJS': 10,
     'DIRECTION_LENGTH': 0.5,
     'COLLECTION': 'DEBUG',
 }
@@ -17,6 +17,7 @@ COLORS = {
     'RED': (1, 0, 0, 1),
     'GREEN': (0, 1, 0, 1),
     'BLUE': (0, 0, 1, 1),
+    'CYAN': (0.1, 1, 1, 1)
 }
 
 # utilities
@@ -41,7 +42,7 @@ def to_vertex(arr: np.ndarray):
     x, y, z = arr
     return x, y, z
 
-def create_object(verts, edges, faces, name, color):
+def create_object(verts, edges, faces, name, color, collection):
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, edges, faces)
     mesh.validate()
@@ -50,10 +51,10 @@ def create_object(verts, edges, faces, name, color):
     # create obj
     obj = bpy.data.objects.new(name, mesh)
     obj.color = COLORS[color]
-    bpy.data.collections[SETTINGS['COLLECTION']].objects.link(obj)
+    collection.objects.link(obj)
 
 # handlers
-def point_handler(params, color):
+def point_handler(params, color, collection):
     p = parse_point(params[0])
 
     # if there is a second arg, use as name
@@ -66,9 +67,9 @@ def point_handler(params, color):
     edges = []
     faces = []
 
-    create_object(verts, edges, faces, name, color)
+    create_object(verts, edges, faces, name, color, collection)
 
-def line_handler(params, color):
+def line_handler(params, color, collection):
     # parse first point
     p0 = parse_point(params[0])
     p1 = parse_point(params[1])
@@ -83,9 +84,9 @@ def line_handler(params, color):
     edges = [(0, 1)]
     faces = []
 
-    create_object(verts, edges, faces, name, color)
+    create_object(verts, edges, faces, name, color, collection)
 
-def tri_handler(params, color):
+def tri_handler(params, color, collection):
     # parse first point
     p0 = parse_point(params[0])
     p1 = parse_point(params[1])
@@ -101,9 +102,9 @@ def tri_handler(params, color):
     edges = [(0, 1), (0, 2), (1, 2)]
     faces = []
 
-    create_object(verts, edges, faces, name, color)
+    create_object(verts, edges, faces, name, color, collection)
 
-def tetra_handler(params, color):
+def tetra_handler(params, color, collection):
     # parse first point
     p0 = parse_point(params[0])
     p1 = parse_point(params[1])
@@ -120,9 +121,9 @@ def tetra_handler(params, color):
     edges = [(0, 1), (0, 2), (1, 2), (3, 0), (3, 1), (3, 2)]
     faces = []
 
-    create_object(verts, edges, faces, name, color)
+    create_object(verts, edges, faces, name, color, collection)
 
-def direction_handler(params, color):
+def direction_handler(params, color, collection):
     origin = parse_point(params[0])
     direction = parse_point(params[1])
 
@@ -146,41 +147,42 @@ def direction_handler(params, color):
     edges = [(0, 1), (1, 2), (1, 3)]
     faces = []
 
-    create_object(verts, edges, faces, name, color)
+    create_object(verts, edges, faces, name, color, collection)
 
-def poly_handler(params, color):
+def aabb_handler(params, color, collection):
+    lo = parse_point(params[0])
+    hi = parse_point(params[1])
 
-    # get the first n vertices that are a point
-    i = 0
-    verts = []
-    for i, param in enumerate(params):
-        try:
-            verts.append(to_vertex(parse_point(param)))
-        except ValueError:
-            break
-
-    # if next arg, name
+    # if third arg, name
     try:
-        name = str(params[i])
+        name = str(params[2])
     except IndexError:
-        name = 'dir'
+        name = 'aabb'
 
-    # connect vertices
-    edges = []
-    for i, _ in enumerate(verts[:-1]):
-        edges.append((i, i+1))
-    edges.append((0, len(verts) - 1))
+    hip = hi + np.array([0, 0, 0.1])
+    lop = lo - np.array([0, 0, 0.1])
 
-    faces = []
+    verts = [to_vertex(lo), (lo[0], lo[1], hi[2]), (lo[0], hi[1], lo[2]), (hi[0], lo[1], lo[2]),
+             to_vertex(hi), (hi[0], hi[1], lo[2]), (hi[0], lo[1], hi[2]), (lo[0], hi[1], hi[2]),
+             to_vertex(lop), to_vertex(hip)]
+    edges = [(0, 1), (0, 2), (0, 3),
+             (4, 5), (4, 6), (4, 7),
+             (1, 7), (1, 6), (5, 3), (5, 2),
+             (6, 3), (7, 2),
+             # hilo-markers
+             (0, 8), (4, 9)]
+    faces = [
 
-    create_object(verts, edges, faces, name, color)
+    ]
+
+    create_object(verts, edges, faces, name, color, collection)
 
 HANDLERS = {'POINT': point_handler,
             'LINE': line_handler,
             'DIR': direction_handler,
             'TRI': tri_handler,
-            'POLY': poly_handler,
-            'TETRA': tetra_handler}
+            'TETRA': tetra_handler,
+            'AABB': aabb_handler}
 
 def parse_trace(trace: str):
     pre, params = trace.split(':')
@@ -189,26 +191,44 @@ def parse_trace(trace: str):
         ty, color = pre.split('-')
     except ValueError:
         ty = pre
-        color = 'BLACK'
+        color = 'WHITE'
 
     params = params.split(';')
     return ty, color, params
 
-def place_traces(collection_name: str):
-    # if DEBUG collection doesnt exist, make one
+def setup_collection(collection_name: str):
+    """
+    If a collection already exists clear it, else create it
+
+    :param collection_name: name of collection
+    :return: reference to collection
+    """
+
+    # if collection doesnt exist, make one
     if not bpy.data.collections.get(collection_name):
         collection = bpy.data.collections.new(collection_name)
         bpy.context.scene.collection.children.link(collection)
 
-    # clear objects in DEBUG collection
+    # clear objects in collection
     bpy.ops.object.select_all(action='DESELECT')
     for obj in bpy.data.collections[collection_name].objects[:]:
         obj.select_set(True)
     bpy.ops.object.delete()
 
+    return bpy.data.collections[collection_name]
+
+def place_traces(traces, collection):
+    # plot the traces
+    for trace in traces:
+        ty, color, params = parse_trace(trace)
+
+        # plot the trace
+        HANDLERS[ty](params, color)
+
+def read_logfile(path):
     # filter log file for traces only
     traces = []
-    for line in open(LOGFILE):
+    for line in open(path):
         if 'DBG' in line:
             _, data = line.split('DBG ')
             traces.append(data)
@@ -216,14 +236,23 @@ def place_traces(collection_name: str):
     # shuffle and truncate traces (to only display a subset)
     random.shuffle(traces)
     traces = traces[0:SETTINGS['MAX_OBJS']]
+    return traces
+
+if __name__ == '__main__':
+
+    # change to object mode
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # create collection
+    collection = setup_collection(SETTINGS['COLLECTION'])
+
+    # foo(collection)
+
+    traces = read_logfile(LOGFILE)
 
     # plot the traces
     for trace in traces:
-
         ty, color, params = parse_trace(trace)
 
         # plot the trace
-        HANDLERS[ty](params, color)
-
-if __name__ == '__main__':
-    place_traces(SETTINGS['COLLECTION'])
+        HANDLERS[ty](params, color, collection)
